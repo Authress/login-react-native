@@ -1,0 +1,61 @@
+{
+  "name": "@authress/login-react-native",
+  "version": "0.0.1",
+  "description": "Authress authentication SDK for React Native. Implements the full OAuth 2.0+ flow with native mobile storage and deep link handling for iOS and Android.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "files": [
+    "src"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "lint": "eslint src tests",
+    "test": "vitest"
+  },
+  "peerDependencies": {
+    "react-native": ">=0.74.0",
+    "react-native-encrypted-storage": ">=4.0.0",
+    "react-native-nitro-cookies": ">=0.1.0",
+    "react-native-quick-crypto": ">=0.7.0"
+  },
+  "devDependencies": {
+    "@authress/eslint-config": "^2.0.18",
+    "@typescript-eslint/eslint-plugin": "^8.49.0",
+    "@typescript-eslint/parser": "^8.49.0",
+    "eslint": "^9.39.1",
+    "react-native-nitro-cookies": "^1.1.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.49.0",
+    "vitest": "^4.0.15"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Authress/authress-login-react-native"
+  },
+  "keywords": [
+    "authentication",
+    "react-native",
+    "OAuth2",
+    "PKCE",
+    "Authress",
+    "login",
+    "iOS",
+    "Android"
+  ],
+  "author": "Authress Developers <developers@authress.io> (https://authress.io)",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "eslint-plugin-import": "^2.32.0",
+    "js-base64": "^3.7.8",
+    "neverthrow": "^8.2.0"
+  }
+}

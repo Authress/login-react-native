@@ -89,6 +89,7 @@ export class LoginClient {
   private async _doSessionCheck(): Promise<boolean> {
     const sessionResult = await this.httpClient.patch('/session', {});
     if (sessionResult.isErr()) {
+      this.logger.warn({ title: '[Authress Login SDK] Session check result — user does not have an existing session', error: sessionResult.error });
       return false;
     }
 
@@ -283,7 +284,10 @@ export class LoginClient {
     if (payload.iss !== expectedOrigin) {return err(new NotLoggedInError());}
 
     const profileResult = await this.httpClient.get<UserProfile>('/session/profile');
-    if (profileResult.isErr()) {return profileResult;}
+    if (profileResult.isErr()) {
+      this.logger.error({ title: '[Authress Login SDK] Failed to fetch user profile', error: profileResult.error });
+      return profileResult;
+    }
 
     return ok(profileResult.value.data);
   }
@@ -321,7 +325,10 @@ export class LoginClient {
     };
 
     const postResult = await this.httpClient.post<{ authenticationUrl: string; authenticationRequestId: string }>('/authentication', body);
-    if (postResult.isErr()) {return postResult;}
+    if (postResult.isErr()) {
+      this.logger.error({ title: '[Authress Login SDK] Failed to start identity link', options, error: postResult.error });
+      return postResult;
+    }
 
     const { authenticationUrl, authenticationRequestId } = postResult.value.data;
     const pendingAuth: PendingAuthentication = {
@@ -366,7 +373,10 @@ export class LoginClient {
     if (tokenResult.isErr()) { return err(new NotLoggedInError()); }
 
     const result = await this.httpClient.delete(`/session/devices/${deviceId}`);
-    if (result.isErr()) {return result;}
+    if (result.isErr()) {
+      this.logger.warn({ title: '[Authress Login SDK] Failed to delete device', deviceId, error: result.error });
+      return result;
+    }
     return ok();
   }
 }

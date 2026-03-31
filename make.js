@@ -1,6 +1,7 @@
 /**
  * Build script — stamps the computed version into package.json.
  */
+// eslint-disable-next-line import/no-extraneous-dependencies
 import fs from 'fs-extra';
 import { fileURLToPath } from 'url';
 import path from 'path';

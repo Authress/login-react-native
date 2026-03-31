@@ -43,12 +43,12 @@ export class LoginClient {
     authStorageManager.restoreCookies(this.settings.authressApiUrl);
 
     // Automatically handle deep link callbacks — no Linking boilerplate needed in app code
-    Linking.addEventListener('url', ({ url }) => {
+    Linking.addEventListener('url', async ({ url }) => {
       if (!url.startsWith(this.settings.redirectUri)) { return; }
       const parsed = new URL(url);
       const code = parsed.searchParams.get('code') ?? '';
       const authenticationRequestId = parsed.searchParams.get('authenticationRequestId') ?? '';
-      this.completeAuthenticationRequest({ code, authenticationRequestId });
+      await this.completeAuthenticationRequest({ code, authenticationRequestId });
     });
   }
 
@@ -162,6 +162,7 @@ export class LoginClient {
 
     if (tokenResult.isErr()) {
       const error = tokenResult.error;
+      this.logger?.log({ title: '[Authress Login SDK] completeAuthenticationRequest token exchange failed', params, error });
       // already-used code — auth is done, clean up and return silently
       if (error.name !== 'AuthressHttpNetworkError' && error.status < 500) {
         return ok();

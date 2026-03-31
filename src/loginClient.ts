@@ -1,3 +1,4 @@
+import { Linking } from 'react-native';
 import { Result, ok, err } from 'neverthrow';
 import HttpClient, { AuthressHttpError, Logger } from './httpClient.ts';
 import jwtManager from './jwtManager.ts';
@@ -23,7 +24,7 @@ export class LoginClient {
   private readonly settings: ValidatedSettings;
   private readonly httpClient: HttpClient;
   private readonly logger: Logger;
-  private _sessionCheckPromise: Promise<Result<boolean, AuthressHttpError>> = Promise.resolve(ok(false));
+  private _sessionCheckPromise: Promise<boolean> = Promise.resolve(false);
   private _sessionCheckIsInProgress = false;
   private _sessionPromise!: Promise<void>;
   private _sessionResolver!: () => void;
@@ -40,6 +41,15 @@ export class LoginClient {
 
     // fire-and-forget — restore cookies from encrypted storage into native cookie jar on startup
     authStorageManager.restoreCookies(this.settings.authressApiUrl);
+
+    // Automatically handle deep link callbacks — no Linking boilerplate needed in app code
+    Linking.addEventListener('url', ({ url }) => {
+      if (!url.startsWith(this.settings.redirectUri)) { return; }
+      const parsed = new URL(url);
+      const code = parsed.searchParams.get('code') ?? '';
+      const authenticationRequestId = parsed.searchParams.get('authenticationRequestId') ?? '';
+      this.completeAuthenticationRequest({ code, authenticationRequestId });
+    });
   }
 
   private _resetSessionPromise(): void {
@@ -55,13 +65,13 @@ export class LoginClient {
   /**
    * Checks if the user's session is still valid, even if their current token is expired. May call
    * Authress API to validate the session. Recommendation: call on every route change.
-   * @returns `Ok(true)` if a valid session exists, `Ok(false)` if not logged in, `Err` on network/server failure.
+   * @returns `true` if a valid session exists, `false` if not logged in or if the server call fails.
    */
-  async userIsLoggedIn(): Promise<Result<boolean, AuthressHttpError>> {
+  async userIsLoggedIn(): Promise<boolean> {
     const tokenResult = await this.getToken();
     if (tokenResult.isOk()) {
       this._resolveSession();
-      return ok(true);
+      return true;
     }
 
     if (this._sessionCheckIsInProgress) {
@@ -76,18 +86,18 @@ export class LoginClient {
     return this._sessionCheckPromise;
   }
 
-  private async _doSessionCheck(): Promise<Result<boolean, never>> {
+  private async _doSessionCheck(): Promise<boolean> {
     const sessionResult = await this.httpClient.patch('/session', {});
     if (sessionResult.isErr()) {
-      return ok(false);
+      return false;
     }
 
     const tokenResult = await this.getToken();
-    if (tokenResult.isErr()) { return ok(false); }
+    if (tokenResult.isErr()) { return false; }
 
     await authStorageManager.backupCookies(this.settings.authressApiUrl);
     this._resolveSession();
-    return ok(true);
+    return true;
   }
 
   // ── authenticate ─────────────────────────────────────────────────────────────
@@ -241,17 +251,17 @@ export class LoginClient {
    * For linked identities use {@link getUserProfile}.
    */
   async getUserIdentity(): Promise<Result<UserIdentity, NotLoggedInError>> {
-    const tokenResult = await this.getToken();
-    if (tokenResult.isErr()) { return err(new NotLoggedInError()); }
-    const token = tokenResult.unwrapOr(null);
+    const idTokenResult = await authStorageManager.getUserCookie(this.settings.authressApiUrl);
+    if (idTokenResult.isErr()) { return err(new NotLoggedInError()); }
+    const idToken = idTokenResult.unwrapOr(null);
 
-    const payload = jwtManager.decode(token);
-    if (!payload) {return err(new NotLoggedInError());}
+    const IdTokenPayload = jwtManager.decode(idToken);
+    if (!IdTokenPayload) {return err(new NotLoggedInError());}
 
     const expectedOrigin = new URL(this.settings.authressApiUrl).origin;
-    if (payload.iss !== expectedOrigin) {return err(new NotLoggedInError());}
+    if (IdTokenPayload.iss !== expectedOrigin) {return err(new NotLoggedInError());}
 
-    return ok({ ...payload, userId: payload.sub as string, sub: payload.sub as string });
+    return ok({ ...IdTokenPayload, userId: IdTokenPayload.sub as string, sub: IdTokenPayload.sub as string });
   }
 
   // ── getUserProfile ───────────────────────────────────────────────────────────
@@ -263,9 +273,15 @@ export class LoginClient {
   async getUserProfile(): Promise<Result<UserProfile, AuthressHttpError | NotLoggedInError>> {
     const tokenResult = await this.getToken();
     if (tokenResult.isErr()) { return err(new NotLoggedInError()); }
-
     const token = tokenResult.unwrapOr(null);
-    const profileResult = await this.httpClient.get<UserProfile>('/session/profile', token ? { Authorization: `Bearer ${token}` } : undefined);
+
+    const payload = jwtManager.decode(token);
+    if (!payload) {return err(new NotLoggedInError());}
+
+    const expectedOrigin = new URL(this.settings.authressApiUrl).origin;
+    if (payload.iss !== expectedOrigin) {return err(new NotLoggedInError());}
+
+    const profileResult = await this.httpClient.get<UserProfile>('/session/profile');
     if (profileResult.isErr()) {return profileResult;}
 
     return ok(profileResult.value.data);

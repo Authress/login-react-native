@@ -21,6 +21,28 @@ export interface StoredCookie {
   value: string;
 }
 
+type RawCookieEntry = { name: string; value: string };
+type RawCookieMap = Record<string, RawCookieEntry | RawCookieEntry[]>;
+
+/** Multiple API calls may each set the same cookie name on different paths. NitroCookies may return an array for that name — pick the last value set. */
+function lastValue(entry: RawCookieEntry | RawCookieEntry[] | undefined): string | null {
+  if (!entry) { return null; }
+  if (Array.isArray(entry)) { return entry[entry.length - 1]?.value ?? null; }
+  return entry.value ?? null;
+}
+
+/** Flatten a potentially-duplicated cookie map into a deduplicated name→value list, last value wins. */
+function deduplicateCookies(cookies: RawCookieMap): StoredCookie[] {
+  const seen = new Map<string, string>();
+  for (const raw of Object.values(cookies)) {
+    const entries = Array.isArray(raw) ? raw : [raw];
+    for (const e of entries) {
+      if (e?.name) { seen.set(e.name, e.value); }
+    }
+  }
+  return [...seen.entries()].map(([name, value]) => ({ name, value }));
+}
+
 class AuthStorageManager {
   // ── PKCE state ──────────────────────────────────────────────────────────────
 
@@ -47,8 +69,9 @@ class AuthStorageManager {
     return ResultAsync.fromSafePromise(
       NitroCookies.get(url)
         .then(async cookies => {
-          if (!Object.keys(cookies).length) {return;}
-          await EncryptedStorage.setItem(COOKIES_BACKUP_KEY, JSON.stringify(Object.values(cookies).map(c => ({ name: c.name, value: c.value }))));
+          const deduplicated = deduplicateCookies(cookies as RawCookieMap);
+          if (!deduplicated.length) {return;}
+          await EncryptedStorage.setItem(COOKIES_BACKUP_KEY, JSON.stringify(deduplicated));
         })
         .catch(() => {})
     );
@@ -74,7 +97,15 @@ class AuthStorageManager {
   getAuthorizationCookie(url: string): ResultAsync<string | null, never> {
     return ResultAsync.fromSafePromise(
       NitroCookies.get(url)
-        .then(cookies => cookies.authorization?.value ?? null)
+        .then(cookies => lastValue((cookies as RawCookieMap).authorization))
+        .catch(() => null)
+    );
+  }
+
+  getUserCookie(url: string): ResultAsync<string | null, never> {
+    return ResultAsync.fromSafePromise(
+      NitroCookies.get(url)
+        .then(cookies => lastValue((cookies as RawCookieMap).user))
         .catch(() => null)
     );
   }

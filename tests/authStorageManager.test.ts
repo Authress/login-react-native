@@ -79,6 +79,19 @@ describe('authStorageManager — cookies', () => {
     expect(backup!.find(c => c.name === 'authorization')?.value).toBe('tok456');
   });
 
+  it('backup deduplicates cookies set multiple times — last value wins', async () => {
+    mockNitroCookies.get.mockResolvedValue({
+      authorization: [
+        { name: 'authorization', value: 'old-token', path: '/api/authentication' },
+        { name: 'authorization', value: 'new-token', path: '/' }
+      ]
+    });
+    await authStorageManager.backupCookies(url);
+    const backup = (await authStorageManager.getCookieBackups()).unwrapOr(null);
+    expect(backup).toHaveLength(1);
+    expect(backup![0]).toEqual({ name: 'authorization', value: 'new-token' });
+  });
+
   it('backup skips when no cookies exist in native store', async () => {
     mockNitroCookies.get.mockResolvedValue({});
     await authStorageManager.backupCookies(url);
@@ -104,6 +117,41 @@ describe('authStorageManager — cookies', () => {
     mockNitroCookies.get.mockResolvedValue({});
     await authStorageManager.restoreCookies(url);
     expect(mockNitroCookies.set).not.toHaveBeenCalled();
+  });
+});
+
+// ── cookie reads ─────────────────────────────────────────────────────────────
+
+describe('authStorageManager — cookie reads', () => {
+  const url = 'https://my-app.login.authress.io';
+
+  it('getAuthorizationCookie returns null when cookie is absent', async () => {
+    expect((await authStorageManager.getAuthorizationCookie(url)).unwrapOr('x')).toBeNull();
+  });
+
+  it('getAuthorizationCookie returns the value when a single cookie is present', async () => {
+    mockNitroCookies.get.mockResolvedValue({ authorization: { name: 'authorization', value: 'tok1' } });
+    expect((await authStorageManager.getAuthorizationCookie(url)).unwrapOr(null)).toBe('tok1');
+  });
+
+  it('getAuthorizationCookie returns the last value when the cookie has been set multiple times', async () => {
+    mockNitroCookies.get.mockResolvedValue({
+      authorization: [
+        { name: 'authorization', value: 'old-tok', path: '/api/authentication' },
+        { name: 'authorization', value: 'new-tok', path: '/' }
+      ]
+    });
+    expect((await authStorageManager.getAuthorizationCookie(url)).unwrapOr(null)).toBe('new-tok');
+  });
+
+  it('getUserCookie returns the last value when the cookie has been set multiple times', async () => {
+    mockNitroCookies.get.mockResolvedValue({
+      user: [
+        { name: 'user', value: 'old-user', path: '/api/authentication' },
+        { name: 'user', value: 'new-user', path: '/' }
+      ]
+    });
+    expect((await authStorageManager.getUserCookie(url)).unwrapOr(null)).toBe('new-user');
   });
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "@authress/login-react-native",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "description": "Authress authentication SDK for React Native. Implements the full OAuth 2.0+ flow with native mobile storage and deep link handling for iOS and Android.",
   "type": "module",
   "main": "./src/index.ts",
@@ -15,6 +15,7 @@
     }
   },
   "scripts": {
+    "build": "node make.js",
     "lint": "eslint src tests",
     "test": "vitest"
   },
@@ -32,6 +33,7 @@
     "react-native-nitro-cookies": "^1.1.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.49.0",
+    "fs-extra": "^11.3.4",
     "vitest": "^4.0.15"
   },
   "repository": {

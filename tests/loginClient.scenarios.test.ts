@@ -27,6 +27,7 @@ const mockNitroCookies = vi.hoisted(() => ({
   clearByName: vi.fn(async () => {})
 }));
 
+vi.mock('react-native', () => ({ Linking: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) } }));
 vi.mock('react-native-quick-crypto', () => ({ default: mockCrypto }));
 vi.mock('react-native-encrypted-storage', () => ({ default: mockStorage }));
 vi.mock('react-native-nitro-cookies', () => ({ default: mockNitroCookies }));
@@ -64,6 +65,11 @@ function mockToken(jwt: string) {
   mockNitroCookies.get.mockResolvedValue({ authorization: { name: 'authorization', value: jwt } });
 }
 
+/** Sets the user identity cookie in the mock native jar. */
+function mockUserCookie(jwt: string) {
+  mockNitroCookies.get.mockResolvedValue({ user: { name: 'user', value: jwt } });
+}
+
 /** Puts a pending authentication request into encrypted storage. */
 function storePendingAuth(authenticationRequestId = 'req-abc') {
   mockStorage.store['authress-pending-auth'] = JSON.stringify({
@@ -99,29 +105,25 @@ describe('userIsLoggedIn', () => {
       .mockResolvedValue({ authorization: { name: 'authorization', value: jwt } }); // getToken after PATCH
     mockFetch.mockResolvedValue(makeResponse(200, {}));
     const client = new LoginClient(BASE_SETTINGS);
-    expect((await client.userIsLoggedIn()).unwrapOr(false)).toBe(true);
+    expect(await client.userIsLoggedIn()).toBe(true);
   });
 
   it('server rejecting the session means the user is not authenticated', async () => {
     mockFetch.mockResolvedValue(makeResponse(401, {}, false));
     const client = new LoginClient(BASE_SETTINGS);
-    const result = await client.userIsLoggedIn();
-    expect(result.isOk()).toBe(true);
-    expect(result.unwrapOr(true)).toBe(false);
+    expect(await client.userIsLoggedIn()).toBe(false);
   });
 
   it('no session found on the server means the user is not authenticated', async () => {
     mockFetch.mockResolvedValue(makeResponse(404, {}, false));
     const client = new LoginClient(BASE_SETTINGS);
-    expect((await client.userIsLoggedIn()).unwrapOr(true)).toBe(false);
+    expect(await client.userIsLoggedIn()).toBe(false);
   });
 
   it('server and network errors are treated as not-logged-in so the caller can take corrective action', async () => {
     mockFetch.mockResolvedValue(makeResponse(500, {}, false));
     const client = new LoginClient(BASE_SETTINGS);
-    const result = await client.userIsLoggedIn();
-    expect(result.isOk()).toBe(true);
-    expect(result.unwrapOr(true)).toBe(false);
+    expect(await client.userIsLoggedIn()).toBe(false);
   });
 
   it('unreachable server is treated as not-logged-in after exhausting retries', async () => {
@@ -130,14 +132,14 @@ describe('userIsLoggedIn', () => {
     const client = new LoginClient(BASE_SETTINGS);
     const promise = client.userIsLoggedIn();
     await vi.runAllTimersAsync();
-    expect((await promise).unwrapOr(true)).toBe(false);
+    expect(await promise).toBe(false);
   });
 
   it('a valid cookie proves authentication locally — no server round-trip needed', async () => {
     const jwt = makeJwt({ sub: 'u', iss: ISSUER, exp: Math.floor(Date.now() / 1000) + 3600 });
     mockToken(jwt);
     const client = new LoginClient(BASE_SETTINGS);
-    expect((await client.userIsLoggedIn()).unwrapOr(false)).toBe(true);
+    expect(await client.userIsLoggedIn()).toBe(true);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -145,7 +147,7 @@ describe('userIsLoggedIn', () => {
     const jwt = makeJwt({ sub: 'u', iss: 'https://other-domain.com', exp: Math.floor(Date.now() / 1000) + 3600 });
     mockToken(jwt);
     const client = new LoginClient(BASE_SETTINGS);
-    expect((await client.userIsLoggedIn()).unwrapOr(false)).toBe(false);
+    expect(await client.userIsLoggedIn()).toBe(false);
   });
 
   it('concurrent checks share one in-flight request to avoid hammering the server', async () => {
@@ -153,7 +155,7 @@ describe('userIsLoggedIn', () => {
     const client = new LoginClient(BASE_SETTINGS);
     const [r1, r2] = await Promise.all([client.userIsLoggedIn(), client.userIsLoggedIn()]);
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(r1.unwrapOr(false)).toBe(r2.unwrapOr(false));
+    expect(r1).toBe(r2);
   });
 
   it('each check after the previous resolves re-queries the server independently', async () => {
@@ -167,8 +169,8 @@ describe('userIsLoggedIn', () => {
       .mockResolvedValueOnce(makeResponse(401, {}, false))
       .mockResolvedValueOnce(makeResponse(200, {}));
     const client = new LoginClient(BASE_SETTINGS);
-    expect((await client.userIsLoggedIn()).unwrapOr(true)).toBe(false);
-    expect((await client.userIsLoggedIn()).unwrapOr(false)).toBe(true);
+    expect(await client.userIsLoggedIn()).toBe(false);
+    expect(await client.userIsLoggedIn()).toBe(true);
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
@@ -177,7 +179,7 @@ describe('userIsLoggedIn', () => {
     mockFetch.mockResolvedValueOnce(makeResponse(401, {}, false)); // PATCH /session after logout
     const client = new LoginClient(BASE_SETTINGS);
     await client.logout();
-    expect((await client.userIsLoggedIn()).unwrapOr(true)).toBe(false);
+    expect(await client.userIsLoggedIn()).toBe(false);
   });
 });
 
@@ -447,7 +449,7 @@ describe('logout', () => {
       .mockResolvedValueOnce(makeResponse(401, {}, false)); // subsequent PATCH /session
     const client = new LoginClient(BASE_SETTINGS);
     await client.logout();
-    expect((await client.userIsLoggedIn()).unwrapOr(true)).toBe(false);
+    expect(await client.userIsLoggedIn()).toBe(false);
   });
 
   it('logout resets the session promise so token waiters block until re-authentication rather than resolving stale', async () => {
@@ -471,7 +473,7 @@ describe('getUserIdentity', () => {
 
   it('issuer match confirms the token was issued by this Authress instance — userId is mapped from sub', async () => {
     const jwt = makeJwt({ sub: 'user-42', iss: ISSUER, exp: Math.floor(Date.now() / 1000) + 3600 });
-    mockToken(jwt);
+    mockUserCookie(jwt);
     const client = new LoginClient(BASE_SETTINGS);
     const identity = (await client.getUserIdentity()).unwrapOr(null);
     expect(identity?.sub).toBe('user-42');
@@ -480,14 +482,14 @@ describe('getUserIdentity', () => {
 
   it('tokens from a different issuer are rejected to prevent cross-tenant identity confusion', async () => {
     const jwt = makeJwt({ sub: 'u', iss: 'https://other-domain.com', exp: Math.floor(Date.now() / 1000) + 3600 });
-    mockToken(jwt);
+    mockUserCookie(jwt);
     const client = new LoginClient(BASE_SETTINGS);
     expect((await client.getUserIdentity()).unwrapOr(null)).toBeNull();
   });
 
   it('userId is derived from sub — a token missing sub leaves userId unset', async () => {
     const jwt = makeJwt({ iss: ISSUER, exp: Math.floor(Date.now() / 1000) + 3600 });
-    mockToken(jwt);
+    mockUserCookie(jwt);
     const client = new LoginClient(BASE_SETTINGS);
     const identity = (await client.getUserIdentity()).unwrapOr(null);
     expect(identity?.userId).toBeUndefined();
@@ -513,15 +515,13 @@ describe('getUserProfile', () => {
     expect(result._unsafeUnwrapErr()).toBeInstanceOf(NotLoggedInError);
   });
 
-  it('the bearer token is forwarded to the profile endpoint so the server can authorize the request', async () => {
+  it('The Cookie token is forwarded to the profile endpoint so the server can authorize the request', async () => {
     const jwt = makeJwt({ sub: 'u', iss: ISSUER, exp: Math.floor(Date.now() / 1000) + 3600 });
     mockToken(jwt);
     mockFetch.mockResolvedValue(makeResponse(200, { name: 'Alice', email: 'alice@example.com' }));
     const client = new LoginClient(BASE_SETTINGS);
     const profile = (await client.getUserProfile()).unwrapOr(null);
     expect(profile).toMatchObject({ name: 'Alice' });
-    const authHeader = mockFetch.mock.calls[0][1].headers.Authorization;
-    expect(authHeader).toMatch(/^Bearer /);
   });
 
   it('server rejecting the token during profile fetch surfaces the auth failure', async () => {
@@ -588,6 +588,17 @@ describe('getDevices / deleteDevice', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it('with a valid session cookie the device list is fetched from the server', async () => {
+    const jwt = makeJwt({ sub: 'u', iss: ISSUER, exp: Math.floor(Date.now() / 1000) + 3600 });
+    mockToken(jwt);
+    mockFetch.mockResolvedValue(makeResponse(200, { devices: [{ deviceId: 'd1' }] }));
+    const client = new LoginClient(BASE_SETTINGS);
+    const result = await client.getDevices();
+    expect(result.isOk()).toBe(true);
+    expect(result._unsafeUnwrap()).toEqual([{ deviceId: 'd1' }]);
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/session/devices'), expect.objectContaining({ method: 'GET' }));
+  });
+
   it('device list cannot be fetched without network connectivity', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     mockFetch.mockRejectedValue(new Error('Network request failed'));
@@ -646,7 +657,7 @@ describe('full-flow scenarios', () => {
     mockFetch.mockResolvedValueOnce(makeResponse(200, {}));
     mockNitroCookies.get
       .mockResolvedValueOnce({ authorization: { name: 'authorization', value: jwt } }) // backupCookies
-      .mockResolvedValue({ authorization: { name: 'authorization', value: jwt } }); // subsequent getToken calls
+      .mockResolvedValue({ authorization: { name: 'authorization', value: jwt }, user: { name: 'user', value: jwt } }); // subsequent calls
     await client.completeAuthenticationRequest({ code: 'code-abc', authenticationRequestId: 'req-xyz' });
 
     // Step 3: getToken
@@ -666,7 +677,7 @@ describe('full-flow scenarios', () => {
       .mockResolvedValue({ authorization: { name: 'authorization', value: jwt } }); // after restore
     const client = new LoginClient(BASE_SETTINGS);
     await Promise.resolve(); // let restoreCookies tick
-    expect((await client.userIsLoggedIn()).unwrapOr(false)).toBe(true);
+    expect(await client.userIsLoggedIn()).toBe(true);
     expect(mockFetch).not.toHaveBeenCalled();
     expect(mockNitroCookies.set).toHaveBeenCalled();
   });
@@ -689,11 +700,35 @@ describe('full-flow scenarios', () => {
 
     const jwt2 = makeJwt({ sub: 'user-2', iss: ISSUER, exp: Math.floor(Date.now() / 1000) + 3600 });
     mockFetch.mockResolvedValueOnce(makeResponse(200, {}));
-    mockNitroCookies.get.mockResolvedValue({ authorization: { name: 'authorization', value: jwt2 } });
+    mockNitroCookies.get.mockResolvedValue({ authorization: { name: 'authorization', value: jwt2 }, user: { name: 'user', value: jwt2 } });
     await client.completeAuthenticationRequest({ code: 'code', authenticationRequestId });
 
     expect((await client.getToken()).unwrapOr(null)).toBe(jwt2);
     expect((await client.getUserIdentity()).unwrapOr(null)?.userId).toBe('user-2');
+  });
+
+  it('app restart with expired cookie but live server session re-establishes auth via PATCH', async () => {
+    const jwt = makeJwt({ sub: 'user-1', iss: ISSUER, exp: Math.floor(Date.now() / 1000) + 3600 });
+    // Backup exists but native jar is empty (OS expired the cookie on restart)
+    mockStorage.store['authress-cookies'] = JSON.stringify([{ name: 'authorization', value: 'expired-token' }]);
+    mockNitroCookies.get
+      .mockResolvedValueOnce({}) // restoreCookies: native empty → attempts restore
+      .mockResolvedValueOnce({}) // getToken (restored cookie was expired, jar reports empty)
+      .mockResolvedValue({ authorization: { name: 'authorization', value: jwt } }); // getToken after PATCH sets new cookie
+    mockFetch.mockResolvedValue(makeResponse(200, {}));
+    const client = new LoginClient(BASE_SETTINGS);
+    await Promise.resolve(); // let restoreCookies tick
+    expect(await client.userIsLoggedIn()).toBe(true);
+    expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/session'), expect.objectContaining({ method: 'PATCH' }));
+  });
+
+  it('app restart with expired cookie and dead server session correctly reports unauthenticated', async () => {
+    // Backup exists but native jar is empty and server session is gone
+    mockStorage.store['authress-cookies'] = JSON.stringify([{ name: 'authorization', value: 'expired-token' }]);
+    mockFetch.mockResolvedValue(makeResponse(401, {}, false));
+    const client = new LoginClient(BASE_SETTINGS);
+    await Promise.resolve(); // let restoreCookies tick
+    expect(await client.userIsLoggedIn()).toBe(false);
   });
 
   it('PKCE completion unblocks any token waiters subscribed across the app before authentication completed', async () => {

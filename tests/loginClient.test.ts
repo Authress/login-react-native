@@ -27,6 +27,7 @@ const mockNitroCookies = vi.hoisted(() => ({
   clearByName: vi.fn(async () => {})
 }));
 
+vi.mock('react-native', () => ({ Linking: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) } }));
 vi.mock('react-native-quick-crypto', () => ({ default: mockCrypto }));
 vi.mock('react-native-encrypted-storage', () => ({ default: mockStorage }));
 vi.mock('react-native-nitro-cookies', () => ({ default: mockNitroCookies }));
@@ -53,6 +54,10 @@ function makeResponse(status: number, body: unknown, ok = status >= 200 && statu
 
 function mockToken(jwt: string) {
   mockNitroCookies.get.mockResolvedValue({ authorization: { name: 'authorization', value: jwt } });
+}
+
+function mockUserCookie(jwt: string) {
+  mockNitroCookies.get.mockResolvedValue({ user: { name: 'user', value: jwt } });
 }
 
 const BASE_SETTINGS = {
@@ -110,7 +115,7 @@ describe('LoginClient.userIsLoggedIn', () => {
     const jwt = makeJwt({ sub: 'user-1', iss: 'https://my-app.login.authress.io', exp: Math.floor(Date.now() / 1000) + 3600 });
     mockToken(jwt);
     const client = new LoginClient(BASE_SETTINGS);
-    expect((await client.userIsLoggedIn()).unwrapOr(false)).toBe(true);
+    expect(await client.userIsLoggedIn()).toBe(true);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
@@ -124,7 +129,7 @@ describe('LoginClient.userIsLoggedIn', () => {
     const client = new LoginClient(BASE_SETTINGS);
     const result = await client.userIsLoggedIn();
     expect(mockFetch).toHaveBeenCalledWith(expect.stringContaining('/session'), expect.objectContaining({ method: 'PATCH' }));
-    expect(result.unwrapOr(false)).toBe(true);
+    expect(result).toBe(true);
   });
 
   it('backs up cookies after PATCH /session succeeds', async () => {
@@ -143,7 +148,7 @@ describe('LoginClient.userIsLoggedIn', () => {
   it('returns false when PATCH /session returns 4xx', async () => {
     mockFetch.mockResolvedValue(makeResponse(404, { message: 'Not Found' }, false));
     const client = new LoginClient(BASE_SETTINGS);
-    expect((await client.userIsLoggedIn()).unwrapOr(false)).toBe(false);
+    expect(await client.userIsLoggedIn()).toBe(false);
   });
 
   it('returns false when PATCH /session throws network error', async () => {
@@ -152,7 +157,7 @@ describe('LoginClient.userIsLoggedIn', () => {
     const client = new LoginClient(BASE_SETTINGS);
     const promise = client.userIsLoggedIn();
     await vi.runAllTimersAsync();
-    expect((await promise).unwrapOr(false)).toBe(false);
+    expect(await promise).toBe(false);
   });
 
   it('deduplicates concurrent calls', async () => {
@@ -160,7 +165,7 @@ describe('LoginClient.userIsLoggedIn', () => {
     const client = new LoginClient(BASE_SETTINGS);
     const [r1, r2] = await Promise.all([client.userIsLoggedIn(), client.userIsLoggedIn()]);
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(r1.unwrapOr(false)).toBe(r2.unwrapOr(false));
+    expect(r1).toBe(r2);
   });
 });
 
@@ -333,7 +338,7 @@ describe('LoginClient.getUserIdentity', () => {
 
   it('decodes and returns the JWT payload with userId = sub', async () => {
     const jwt = makeJwt({ sub: 'user-1', iss: 'https://my-app.login.authress.io', exp: Math.floor(Date.now() / 1000) + 3600 });
-    mockToken(jwt);
+    mockUserCookie(jwt);
     const client = new LoginClient(BASE_SETTINGS);
     const identity = (await client.getUserIdentity()).unwrapOr(null);
     expect(identity?.sub).toBe('user-1');
@@ -342,7 +347,7 @@ describe('LoginClient.getUserIdentity', () => {
 
   it('returns null when issuer does not match hostUrl', async () => {
     const jwt = makeJwt({ sub: 'u', iss: 'https://other-domain.com', exp: Math.floor(Date.now() / 1000) + 3600 });
-    mockToken(jwt);
+    mockUserCookie(jwt);
     const client = new LoginClient(BASE_SETTINGS);
     expect((await client.getUserIdentity()).unwrapOr(null)).toBeNull();
   });
@@ -358,7 +363,7 @@ describe('LoginClient.getUserProfile', () => {
     expect(result._unsafeUnwrapErr()).toBeInstanceOf(NotLoggedInError);
   });
 
-  it('calls GET /session/profile with Bearer token', async () => {
+  it('calls GET /session/profile with Cookie', async () => {
     const jwt = makeJwt({ sub: 'u', iss: 'https://my-app.login.authress.io', exp: Math.floor(Date.now() / 1000) + 3600 });
     mockToken(jwt);
     mockFetch.mockResolvedValue(makeResponse(200, { name: 'Test User', email: 'test@example.com' }));
@@ -401,7 +406,7 @@ describe('LoginClient.linkIdentity', () => {
 // ── getDevices ────────────────────────────────────────────────────────────────
 
 describe('LoginClient.getDevices', () => {
-  it('calls GET /session/devices with Bearer token', async () => {
+  it('calls GET /session/devices with Cookie', async () => {
     const jwt = makeJwt({ sub: 'u', iss: 'https://my-app.login.authress.io', exp: Math.floor(Date.now() / 1000) + 3600 });
     mockToken(jwt);
     mockFetch.mockResolvedValue(makeResponse(200, { devices: [{ deviceId: 'd1' }] }));
@@ -424,7 +429,7 @@ describe('LoginClient.getDevices', () => {
 // ── deleteDevice ──────────────────────────────────────────────────────────────
 
 describe('LoginClient.deleteDevice', () => {
-  it('calls DELETE /session/devices/{id} with Bearer token', async () => {
+  it('calls DELETE /session/devices/{id} with Cookie', async () => {
     const jwt = makeJwt({ sub: 'u', iss: 'https://my-app.login.authress.io', exp: Math.floor(Date.now() / 1000) + 3600 });
     mockToken(jwt);
     mockFetch.mockResolvedValue(makeResponse(204, {}));
